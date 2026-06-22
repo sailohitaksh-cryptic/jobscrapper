@@ -22,6 +22,7 @@ signals, and lets you apply / dismiss from one page.
 | `jobs_core.py` | the engine: scrape + parse + store. Runnable standalone. |
 | `app.py` | FastAPI: reads/updates `jobs.db`, serves the page. |
 | `static/index.html` | the dashboard (vanilla JS, no build step). |
+| `tunnel.sh` | run the app + open a public Cloudflare tunnel link. |
 | `test_app.py` | offline verification (parsing + API, no network). |
 
 ## Setup
@@ -50,6 +51,32 @@ uvicorn app:app --reload
 
 The dashboard also has a **Scrape now** button (on-demand scrape) so you don't
 have to wait for cron.
+
+## Get a public link (Cloudflare Tunnel)
+
+To reach the dashboard from your phone or anywhere via a simple `https://` link,
+run it on your Mac and expose it with a free Cloudflare quick tunnel — no account
+needed. This is the recommended setup: the scrape runs from your home IP (LinkedIn
+blocks datacenter/cloud IPs, so a normal cloud host would scrape unreliably), and
+the data stays on your machine.
+
+```bash
+brew install cloudflared        # one-time
+conda activate capstone
+./tunnel.sh
+```
+
+`tunnel.sh` starts the app and opens the tunnel; it prints a
+`https://<random>.trycloudflare.com` URL — open that on any device. Press Ctrl-C
+to stop both. The link is live only while your Mac is awake and the script is
+running.
+
+Notes:
+
+- The quick-tunnel URL changes every run. For a permanent, bookmarkable link, use
+  a [named Cloudflare tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+  (needs a domain on Cloudflare) or an ngrok static domain.
+- There's no auth, so treat the URL as a secret while it's live.
 
 ## Configure
 
