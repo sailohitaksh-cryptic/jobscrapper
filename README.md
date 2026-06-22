@@ -52,6 +52,11 @@ uvicorn app:app --reload
 The dashboard also has a **Scrape now** button (on-demand scrape) so you don't
 have to wait for cron.
 
+The job list refreshes on a fixed **30-minute** cadence (and on **Scrape now**).
+In between, filtering and apply/dismiss happen against a cached snapshot, so
+working through the list never resurfaces newly-scraped jobs mid-session. The
+header shows an `updated HH:MM` stamp for the current snapshot.
+
 ## Get a public link (Cloudflare Tunnel)
 
 To reach the dashboard from your phone or anywhere via a simple `https://` link,

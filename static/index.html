@@ -57,6 +57,7 @@
     <label><input type="text" id="q" placeholder="title or company" /></label>
     <button id="scrape">Scrape now</button>
     <span id="stats"></span>
+    <span id="updated" style="font-size:12px;color:var(--muted)"></span>
   </div>
 </header>
 <main>
@@ -73,6 +74,31 @@ const scrapeBtn = document.getElementById("scrape");
 const jobsDiv = document.getElementById("jobs");
 const emptyDiv = document.getElementById("empty");
 const statsSpan = document.getElementById("stats");
+const updatedSpan = document.getElementById("updated");
+
+// data refreshes on a fixed 30-minute cadence. between refreshes the list stays
+// put (even across reloads, thanks to the cache) so working through it doesn't
+// keep resurfacing newly-scraped jobs.
+const REFRESH_MS = 30 * 60 * 1000;
+const CACHE_KEY = "jobcache";
+
+// in-memory snapshot of every stored job, plus when it was fetched
+let state = { jobs: [], ts: 0 };
+
+function saveCache() {
+  // persisting is best-effort; a full/blocked localStorage isn't fatal
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+  } catch (e) {}
+}
+
+function loadCache() {
+  try {
+    const data = JSON.parse(localStorage.getItem(CACHE_KEY));
+    if (data && Array.isArray(data.jobs)) return data;
+  } catch (e) {}
+  return null;
+}
 
 // build the badge for sponsorship, color-coded
 function sponsorBadge(value) {
@@ -91,14 +117,22 @@ function badge(text, cls) {
   return b;
 }
 
-// POST a new status for a job, then refresh
+// update a job's status in the cached snapshot and on the server, without
+// refetching the list (so applying/dismissing never resurfaces new jobs)
 async function setStatus(jobId, status) {
+  for (let i = 0; i < state.jobs.length; i++) {
+    if (state.jobs[i].job_id === jobId) {
+      state.jobs[i].status = status;
+      break;
+    }
+  }
+  saveCache();
+  render();
   await fetch("/api/jobs/" + encodeURIComponent(jobId) + "/status", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status: status }),
   });
-  await refresh();
 }
 
 // build one job card using textContent so all values are escaped by construction
@@ -159,62 +193,117 @@ function makeCard(job) {
   return card;
 }
 
-async function loadJobs() {
-  const params = new URLSearchParams();
-  params.set("status", statusSel.value);
-  params.set("max_years", maxYears.value || "100");
-  params.set("hide_no_sponsor", hideNoSponsor.checked ? "true" : "false");
-  const q = qBox.value.trim();
-  if (q) params.set("q", q);
-  const res = await fetch("/api/jobs?" + params.toString());
-  const jobs = await res.json();
+// pull the full job list from the server into the cache, then re-render. this
+// is the only thing that brings in newly-scraped jobs, and it runs on the
+// 30-minute timer (or when you hit "Scrape now").
+async function fetchAll() {
+  const res = await fetch("/api/jobs?status=all&max_years=100");
+  const rows = await res.json();
+  const jobs = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    // keep only what the cards use; drop the heavy description
+    jobs.push({
+      job_id: r.job_id, title: r.title, company: r.company,
+      location: r.location, url: r.url, min_years: r.min_years,
+      sponsorship: r.sponsorship, job_level: r.job_level,
+      search_term: r.search_term, status: r.status,
+    });
+  }
+  state = { jobs: jobs, ts: Date.now() };
+  saveCache();
+  render();
+}
+
+// apply the header filters to the cached jobs, client-side (instant, no network)
+function filtered() {
+  const status = statusSel.value;
+  const cap = parseInt(maxYears.value, 10);
+  const maxY = isNaN(cap) ? 100 : cap;
+  const hide = hideNoSponsor.checked;
+  const q = qBox.value.trim().toLowerCase();
+  const out = [];
+  for (let i = 0; i < state.jobs.length; i++) {
+    const j = state.jobs[i];
+    if (status !== "all" && j.status !== status) continue;
+    if (j.min_years !== null && j.min_years !== undefined && j.min_years > maxY) continue;
+    if (hide && j.sponsorship === "no_sponsorship") continue;
+    if (q) {
+      const hay = ((j.title || "") + " " + (j.company || "")).toLowerCase();
+      if (hay.indexOf(q) === -1) continue;
+    }
+    out.push(j);
+  }
+  return out;
+}
+
+function renderStats() {
+  const counts = { new: 0, applied: 0, dismissed: 0 };
+  for (let i = 0; i < state.jobs.length; i++) {
+    const s = state.jobs[i].status;
+    if (counts[s] === undefined) counts[s] = 0;
+    counts[s] += 1;
+  }
+  statsSpan.textContent =
+    "new " + counts.new + " · applied " + counts.applied + " · dismissed " + counts.dismissed;
+  if (state.ts) {
+    const d = new Date(state.ts);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    updatedSpan.textContent = "updated " + hh + ":" + mm;
+  }
+}
+
+function render() {
+  const jobs = filtered();
   jobsDiv.innerHTML = "";
   for (let i = 0; i < jobs.length; i++) {
     jobsDiv.appendChild(makeCard(jobs[i]));
   }
   emptyDiv.style.display = jobs.length ? "none" : "block";
+  renderStats();
 }
 
-async function loadStats() {
-  const res = await fetch("/api/stats");
-  const data = await res.json();
-  const order = ["new", "applied", "dismissed"];
-  const bits = [];
-  for (let i = 0; i < order.length; i++) {
-    const k = order[i];
-    bits.push(k + " " + (data[k] || 0));
-  }
-  statsSpan.textContent = bits.join(" · ");
-}
-
-async function refresh() {
-  await loadJobs();
-  await loadStats();
-}
-
-// re-fetch whenever a filter changes
-statusSel.addEventListener("change", loadJobs);
-maxYears.addEventListener("input", loadJobs);
-hideNoSponsor.addEventListener("change", loadJobs);
-let qTimer = null;
-qBox.addEventListener("input", function () {
-  clearTimeout(qTimer);
-  qTimer = setTimeout(loadJobs, 250);
-});
+// filters just re-render the cached jobs (no network), so the list only
+// changes from your own actions, never from a background fetch
+statusSel.addEventListener("change", render);
+maxYears.addEventListener("input", render);
+hideNoSponsor.addEventListener("change", render);
+qBox.addEventListener("input", render);
 
 scrapeBtn.addEventListener("click", async function () {
   scrapeBtn.disabled = true;
   scrapeBtn.textContent = "Scraping…";
   await fetch("/api/scrape", { method: "POST" });
-  // the scrape runs in the background; give it a moment, then refresh
+  // the scrape runs in the background; give it a moment, then pull fresh data
   setTimeout(async function () {
     scrapeBtn.disabled = false;
     scrapeBtn.textContent = "Scrape now";
-    await refresh();
+    await fetchAll();
   }, 6000);
 });
 
-refresh();
+// keep refreshing every 30 minutes while the tab is open
+function startRefreshCycle() {
+  setInterval(fetchAll, REFRESH_MS);
+}
+
+// on load: reuse the cached list if it's under 30 min old (so navigating away
+// and back shows the same jobs); otherwise fetch fresh
+const cached = loadCache();
+const age = cached ? Date.now() - cached.ts : Infinity;
+if (cached && age < REFRESH_MS) {
+  state = cached;
+  render();
+  // refresh once the current snapshot turns 30 min old, then every 30 min
+  setTimeout(function () {
+    fetchAll();
+    startRefreshCycle();
+  }, REFRESH_MS - age);
+} else {
+  fetchAll();
+  startRefreshCycle();
+}
 </script>
 </body>
 </html>
