@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Job search</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --line:#e2e5ea; --muted:#6b7280; --accent:#2563eb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+         background:var(--bg); color:#111827; }
+  header { position:sticky; top:0; z-index:10; background:var(--card);
+           border-bottom:1px solid var(--line); padding:10px 16px; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .controls label { font-size:13px; color:var(--muted); display:flex; gap:5px; align-items:center; }
+  select, input[type=number], input[type=text] { padding:6px 8px; border:1px solid var(--line);
+           border-radius:6px; font-size:14px; background:#fff; }
+  input[type=number] { width:64px; }
+  input[type=text] { min-width:180px; }
+  button { padding:6px 12px; border:1px solid var(--line); border-radius:6px; background:#fff;
+           cursor:pointer; font-size:14px; }
+  button:hover { background:#f0f2f5; }
+  #scrape { background:var(--accent); color:#fff; border-color:var(--accent); }
+  #scrape:hover { background:#1d4ed8; }
+  #stats { font-size:13px; color:var(--muted); margin-left:auto; }
+  main { max-width:880px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:14px 16px; margin-bottom:12px; }
+  .card h3 { margin:0 0 2px; font-size:16px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:8px; }
+  .badges { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:999px; background:#eef1f5; color:#374151; }
+  .badge.green { background:#dcfce7; color:#166534; }
+  .badge.red { background:#fee2e2; color:#991b1b; }
+  .badge.gray { background:#e5e7eb; color:#4b5563; }
+  .actions { display:flex; gap:8px; }
+  .actions .apply { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .actions .apply:hover { background:#1d4ed8; }
+  #empty { color:var(--muted); text-align:center; padding:40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="controls">
+    <label>Status
+      <select id="status">
+        <option value="new">New</option>
+        <option value="applied">Applied</option>
+        <option value="dismissed">Dismissed</option>
+        <option value="all">All</option>
+      </select>
+    </label>
+    <label>&le;
+      <input type="number" id="maxYears" value="4" min="0" max="20" /> yrs
+    </label>
+    <label><input type="checkbox" id="hideNoSponsor" /> hide no-sponsor</label>
+    <label><input type="text" id="q" placeholder="title or company" /></label>
+    <button id="scrape">Scrape now</button>
+    <span id="stats"></span>
+  </div>
+</header>
+<main>
+  <div id="jobs"></div>
+  <div id="empty" style="display:none">No jobs match these filters.</div>
+</main>
+
+<script>
+const statusSel = document.getElementById("status");
+const maxYears = document.getElementById("maxYears");
+const hideNoSponsor = document.getElementById("hideNoSponsor");
+const qBox = document.getElementById("q");
+const scrapeBtn = document.getElementById("scrape");
+const jobsDiv = document.getElementById("jobs");
+const emptyDiv = document.getElementById("empty");
+const statsSpan = document.getElementById("stats");
+
+// build the badge for sponsorship, color-coded
+function sponsorBadge(value) {
+  const b = document.createElement("span");
+  b.className = "badge";
+  if (value === "sponsors") { b.classList.add("green"); b.textContent = "sponsors"; }
+  else if (value === "no_sponsorship") { b.classList.add("red"); b.textContent = "no sponsorship"; }
+  else { b.classList.add("gray"); b.textContent = "sponsorship unknown"; }
+  return b;
+}
+
+function badge(text, cls) {
+  const b = document.createElement("span");
+  b.className = cls ? "badge " + cls : "badge";
+  b.textContent = text;
+  return b;
+}
+
+// POST a new status for a job, then refresh
+async function setStatus(jobId, status) {
+  await fetch("/api/jobs/" + encodeURIComponent(jobId) + "/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: status }),
+  });
+  await refresh();
+}
+
+// build one job card using textContent so all values are escaped by construction
+function makeCard(job) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  const h = document.createElement("h3");
+  h.textContent = job.title || "(untitled)";
+  card.appendChild(h);
+
+  const sub = document.createElement("div");
+  sub.className = "sub";
+  const parts = [];
+  if (job.company) parts.push(job.company);
+  if (job.location) parts.push(job.location);
+  sub.textContent = parts.join(" · ");
+  card.appendChild(sub);
+
+  const badges = document.createElement("div");
+  badges.className = "badges";
+  if (job.min_years === null || job.min_years === undefined) {
+    badges.appendChild(badge("exp: unstated"));
+  } else {
+    badges.appendChild(badge(job.min_years + "+ yrs"));
+  }
+  badges.appendChild(sponsorBadge(job.sponsorship));
+  if (job.job_level) badges.appendChild(badge(job.job_level));
+  if (job.search_term) badges.appendChild(badge("via: " + job.search_term));
+  card.appendChild(badges);
+
+  const actions = document.createElement("div");
+  actions.className = "actions";
+
+  const apply = document.createElement("button");
+  apply.className = "apply";
+  apply.textContent = "Apply";
+  apply.addEventListener("click", function () {
+    if (job.url) window.open(job.url, "_blank", "noopener");
+    setStatus(job.job_id, "applied");
+  });
+  actions.appendChild(apply);
+
+  const dismiss = document.createElement("button");
+  dismiss.textContent = "Dismiss";
+  dismiss.addEventListener("click", function () { setStatus(job.job_id, "dismissed"); });
+  actions.appendChild(dismiss);
+
+  // non-new jobs can be put back to new
+  if (job.status !== "new") {
+    const reset = document.createElement("button");
+    reset.textContent = "Reset";
+    reset.addEventListener("click", function () { setStatus(job.job_id, "new"); });
+    actions.appendChild(reset);
+  }
+
+  card.appendChild(actions);
+  return card;
+}
+
+async function loadJobs() {
+  const params = new URLSearchParams();
+  params.set("status", statusSel.value);
+  params.set("max_years", maxYears.value || "100");
+  params.set("hide_no_sponsor", hideNoSponsor.checked ? "true" : "false");
+  const q = qBox.value.trim();
+  if (q) params.set("q", q);
+  const res = await fetch("/api/jobs?" + params.toString());
+  const jobs = await res.json();
+  jobsDiv.innerHTML = "";
+  for (let i = 0; i < jobs.length; i++) {
+    jobsDiv.appendChild(makeCard(jobs[i]));
+  }
+  emptyDiv.style.display = jobs.length ? "none" : "block";
+}
+
+async function loadStats() {
+  const res = await fetch("/api/stats");
+  const data = await res.json();
+  const order = ["new", "applied", "dismissed"];
+  const bits = [];
+  for (let i = 0; i < order.length; i++) {
+    const k = order[i];
+    bits.push(k + " " + (data[k] || 0));
+  }
+  statsSpan.textContent = bits.join(" · ");
+}
+
+async function refresh() {
+  await loadJobs();
+  await loadStats();
+}
+
+// re-fetch whenever a filter changes
+statusSel.addEventListener("change", loadJobs);
+maxYears.addEventListener("input", loadJobs);
+hideNoSponsor.addEventListener("change", loadJobs);
+let qTimer = null;
+qBox.addEventListener("input", function () {
+  clearTimeout(qTimer);
+  qTimer = setTimeout(loadJobs, 250);
+});
+
+scrapeBtn.addEventListener("click", async function () {
+  scrapeBtn.disabled = true;
+  scrapeBtn.textContent = "Scraping…";
+  await fetch("/api/scrape", { method: "POST" });
+  // the scrape runs in the background; give it a moment, then refresh
+  setTimeout(async function () {
+    scrapeBtn.disabled = false;
+    scrapeBtn.textContent = "Scrape now";
+    await refresh();
+  }, 6000);
+});
+
+refresh();
+</script>
+</body>
+</html>

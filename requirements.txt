@@ -1,0 +1,5 @@
+python-jobspy
+fastapi
+uvicorn
+# only needed to run test_app.py (FastAPI's TestClient)
+httpx

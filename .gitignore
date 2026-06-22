@@ -1,0 +1,7 @@
+# runtime database (re-created by the scraper)
+jobs.db
+# scrape cron log
+scrape.log
+__pycache__/
+*.pyc
+.DS_Store
