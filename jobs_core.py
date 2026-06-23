@@ -10,12 +10,32 @@ import sqlite3
 from datetime import datetime, timezone
 
 # ---- config (edit me) ----
-SEARCHES = [
+# base role keywords to rotate through. edit this list freely.
+ROLE_KEYWORDS = [
     "data scientist",
+    "data science",
     "machine learning engineer",
     "ai engineer",
-    "data science",
+    "applied ai engineer",
+    "llm engineer",
+    "nlp engineer",
+    "computer vision engineer",
+    "data scientist, machine learning",
+    "healthcare ai engineer",
+    "generative ai engineer",
+    "ai research engineer",
+    "mlops engineer",
+    "ml platform engineer",
+    "research engineer, ai/ml",
 ]
+# each keyword is also searched with this prefix, to surface junior roles
+# (mirrors the wording of LinkedIn's "entry level ..." semantic search)
+ENTRY_LEVEL_PREFIX = "entry level"
+# the searches actually run: each keyword plain, then its entry-level variant
+SEARCHES = []
+for _kw in ROLE_KEYWORDS:
+    SEARCHES.append(_kw)
+    SEARCHES.append(ENTRY_LEVEL_PREFIX + " " + _kw)
 LOCATION = "United States"
 # matches LinkedIn's "past hour" filter
 HOURS_OLD = 1

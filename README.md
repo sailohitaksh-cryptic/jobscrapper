@@ -87,11 +87,27 @@ Notes:
 
 Edit the config block at the top of `jobs_core.py`:
 
-- `SEARCHES` — the keyword searches to rotate through.
+- `ROLE_KEYWORDS` — the base role keywords. Each is searched twice (as-is and
+  with an "entry level" prefix), so `SEARCHES` is auto-built from this list.
 - `LOCATION`, `HOURS_OLD` (1 = LinkedIn's "past hour"), `RESULTS_PER_SEARCH`.
 - `SLEEP_BETWEEN` — seconds between searches (be polite, avoid rate limits).
 - `MY_YEARS`, `MAX_YEARS_OK` — a job is kept when its stated minimum is missing
   **or** `<= MAX_YEARS_OK`. An unstated requirement is kept (usually entry-level).
+
+A few things worth knowing about the scrape:
+
+- **Request volume scales with `ROLE_KEYWORDS`.** The default list is 15 keywords
+  → 30 searches per run, plus a description fetch per new job. Hourly with
+  `HOURS_OLD=1` that's fine (each run only pulls the last hour), but if you grow
+  the list a lot, raise `SLEEP_BETWEEN` or trim `RESULTS_PER_SEARCH` to stay
+  under LinkedIn's radar.
+- **"Past 24 hours" is covered by the hourly cron**, not by a wide window — each
+  hourly run grabs the last hour and dedupes, so a day of runs ≈ a rolling 24h
+  with much less rate-limit risk. Bump `HOURS_OLD` only for a one-off catch-up.
+- **LinkedIn's AI/semantic search isn't reachable.** JobSpy uses LinkedIn's guest
+  API, which takes literal keywords + structured filters. Natural-language
+  semantic queries and UI-only filters like "under 100 applicants" can't be
+  reproduced — the "entry level" keyword variants are the practical stand-in.
 
 ## Hourly scrape (cron)
 
