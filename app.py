@@ -28,7 +28,7 @@ def index():
 
 
 @app.get("/api/jobs")
-def list_jobs(status="new", max_years=100, hide_no_sponsor=False, q=""):
+def list_jobs(status="new", max_years=100, max_applicants=1000000, hide_no_sponsor=False, q=""):
     clauses = []
     params = []
     # status defaults to 'new'; 'all' skips the status filter
@@ -38,6 +38,9 @@ def list_jobs(status="new", max_years=100, hide_no_sponsor=False, q=""):
     # always cap by experience; an unstated requirement (NULL) always passes
     clauses.append("(min_years IS NULL OR min_years <= ?)")
     params.append(int(max_years))
+    # cap by applicant count; an unknown count (NULL) always passes
+    clauses.append("(applicants IS NULL OR applicants <= ?)")
+    params.append(int(max_applicants))
     # hide explicit no-sponsor roles; NULL/unknown stay visible
     if str(hide_no_sponsor).lower() == "true":
         clauses.append("(sponsorship IS NULL OR sponsorship != 'no_sponsorship')")

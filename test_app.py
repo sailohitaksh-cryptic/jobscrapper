@@ -33,24 +33,33 @@ def test_parsing():
     assert s("visa sponsorship is available") == "sponsors"
     assert s("must be authorized to work in the US") == "unknown"
     assert s("nothing relevant here") == "unknown"
+
+    # applicant counts off a job page, including the "over"/"first" wordings
+    a = jobs_core.extract_applicants
+    assert a("Over 200 applicants") == 200
+    assert a("47 applicants") == 47
+    assert a("Be among the first 25 applicants") == 25
+    assert a("1 applicant") == 1
+    assert a("no count shown") is None
     print("PASS  parsing")
 
 
 def _seed():
     # (job_id, title, company, location, url, description, date_posted,
-    #  job_level, search_term, min_years, sponsorship, status, first_seen)
+    #  job_level, search_term, min_years, sponsorship, applicants, status,
+    #  first_seen)
     rows = [
         ("j1", "Junior Data Scientist", "Acme", "NYC", "http://x/1", "", None,
-         "entry level", "data scientist", 1, "sponsors", "new",
+         "entry level", "data scientist", 1, "sponsors", 5, "new",
          "2026-06-22T10:00:00"),
         ("j2", "ML Engineer", "Beta", "Remote", "http://x/2", "", None,
-         "mid-senior level", "machine learning engineer", None, "unknown", "new",
-         "2026-06-22T11:00:00"),
+         "mid-senior level", "machine learning engineer", None, "unknown", None,
+         "new", "2026-06-22T11:00:00"),
         ("j3", "Senior Data Scientist", "Gamma", "SF", "http://x/3", "", None,
-         "mid-senior level", "data science", 6, "unknown", "new",
+         "mid-senior level", "data science", 6, "unknown", 300, "new",
          "2026-06-22T12:00:00"),
         ("j4", "AI Engineer", "Delta", "Austin", "http://x/4", "", None,
-         "associate", "ai engineer", 2, "no_sponsorship", "new",
+         "associate", "ai engineer", 2, "no_sponsorship", 150, "new",
          "2026-06-22T13:00:00"),
     ]
     conn = jobs_core.get_db()
@@ -58,8 +67,8 @@ def _seed():
         conn.execute(
             "INSERT INTO jobs (job_id, title, company, location, url, "
             "description, date_posted, job_level, search_term, min_years, "
-            "sponsorship, status, first_seen) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "sponsorship, applicants, status, first_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             r,
         )
     conn.commit()
@@ -92,6 +101,13 @@ def test_api():
         r = client.get("/api/jobs", params={"status": "new", "max_years": 4})
         ids = _ids(r.json())
         assert ids == {"j1", "j2", "j4"}, ids
+
+        # applicant cap: <=100 keeps j1 (5) and the unknown j2 (NULL), drops
+        # j3 (300) and j4 (150)
+        r = client.get("/api/jobs", params={"status": "all", "max_years": 100,
+                                            "max_applicants": 100})
+        ids = _ids(r.json())
+        assert ids == {"j1", "j2"}, ids
 
         # hide no-sponsor removes j4
         r = client.get("/api/jobs", params={"status": "new", "max_years": 4,

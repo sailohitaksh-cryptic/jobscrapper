@@ -53,6 +53,9 @@
     <label>&le;
       <input type="number" id="maxYears" value="4" min="0" max="20" /> yrs
     </label>
+    <label>&le;
+      <input type="number" id="maxApplicants" value="100" min="0" /> applicants
+    </label>
     <label><input type="checkbox" id="hideNoSponsor" /> hide no-sponsor</label>
     <label><input type="text" id="q" placeholder="title or company" /></label>
     <button id="scrape">Scrape now</button>
@@ -68,6 +71,7 @@
 <script>
 const statusSel = document.getElementById("status");
 const maxYears = document.getElementById("maxYears");
+const maxApplicants = document.getElementById("maxApplicants");
 const hideNoSponsor = document.getElementById("hideNoSponsor");
 const qBox = document.getElementById("q");
 const scrapeBtn = document.getElementById("scrape");
@@ -159,6 +163,12 @@ function makeCard(job) {
   } else {
     badges.appendChild(badge(job.min_years + "+ yrs"));
   }
+  // applicant count: green when low (early), gray when unknown
+  if (job.applicants === null || job.applicants === undefined) {
+    badges.appendChild(badge("applicants: ?", "gray"));
+  } else {
+    badges.appendChild(badge(job.applicants + " applicants", job.applicants < 25 ? "green" : ""));
+  }
   badges.appendChild(sponsorBadge(job.sponsorship));
   if (job.job_level) badges.appendChild(badge(job.job_level));
   if (job.search_term) badges.appendChild(badge("via: " + job.search_term));
@@ -206,8 +216,8 @@ async function fetchAll() {
     jobs.push({
       job_id: r.job_id, title: r.title, company: r.company,
       location: r.location, url: r.url, min_years: r.min_years,
-      sponsorship: r.sponsorship, job_level: r.job_level,
-      search_term: r.search_term, status: r.status,
+      sponsorship: r.sponsorship, applicants: r.applicants,
+      job_level: r.job_level, search_term: r.search_term, status: r.status,
     });
   }
   state = { jobs: jobs, ts: Date.now() };
@@ -220,6 +230,8 @@ function filtered() {
   const status = statusSel.value;
   const cap = parseInt(maxYears.value, 10);
   const maxY = isNaN(cap) ? 100 : cap;
+  const acap = parseInt(maxApplicants.value, 10);
+  const maxA = isNaN(acap) ? 1000000 : acap;
   const hide = hideNoSponsor.checked;
   const q = qBox.value.trim().toLowerCase();
   const out = [];
@@ -227,6 +239,8 @@ function filtered() {
     const j = state.jobs[i];
     if (status !== "all" && j.status !== status) continue;
     if (j.min_years !== null && j.min_years !== undefined && j.min_years > maxY) continue;
+    // unknown applicant count (null) always passes
+    if (j.applicants !== null && j.applicants !== undefined && j.applicants > maxA) continue;
     if (hide && j.sponsorship === "no_sponsorship") continue;
     if (q) {
       const hay = ((j.title || "") + " " + (j.company || "")).toLowerCase();
@@ -268,6 +282,7 @@ function render() {
 // changes from your own actions, never from a background fetch
 statusSel.addEventListener("change", render);
 maxYears.addEventListener("input", render);
+maxApplicants.addEventListener("input", render);
 hideNoSponsor.addEventListener("change", render);
 qBox.addEventListener("input", render);
 

@@ -93,21 +93,28 @@ Edit the config block at the top of `jobs_core.py`:
 - `SLEEP_BETWEEN` — seconds between searches (be polite, avoid rate limits).
 - `MY_YEARS`, `MAX_YEARS_OK` — a job is kept when its stated minimum is missing
   **or** `<= MAX_YEARS_OK`. An unstated requirement is kept (usually entry-level).
+- `FETCH_APPLICANTS` — when on, each kept job gets one extra request to read its
+  LinkedIn applicant count (used by the dashboard's "≤ N applicants" filter).
+  Turn off if it slows runs or trips rate limits; counts just become unknown.
 
 A few things worth knowing about the scrape:
 
 - **Request volume scales with `ROLE_KEYWORDS`.** The default list is 15 keywords
-  → 30 searches per run, plus a description fetch per new job. Hourly with
-  `HOURS_OLD=1` that's fine (each run only pulls the last hour), but if you grow
-  the list a lot, raise `SLEEP_BETWEEN` or trim `RESULTS_PER_SEARCH` to stay
-  under LinkedIn's radar.
+  → 30 searches per run, plus a description fetch per new job (and, with
+  `FETCH_APPLICANTS`, one more per kept job). Hourly with `HOURS_OLD=1` that's
+  fine (each run only pulls the last hour), but if you grow the list a lot, raise
+  `SLEEP_BETWEEN` or trim `RESULTS_PER_SEARCH` to stay under LinkedIn's radar.
 - **"Past 24 hours" is covered by the hourly cron**, not by a wide window — each
   hourly run grabs the last hour and dedupes, so a day of runs ≈ a rolling 24h
   with much less rate-limit risk. Bump `HOURS_OLD` only for a one-off catch-up.
-- **LinkedIn's AI/semantic search isn't reachable.** JobSpy uses LinkedIn's guest
-  API, which takes literal keywords + structured filters. Natural-language
-  semantic queries and UI-only filters like "under 100 applicants" can't be
-  reproduced — the "entry level" keyword variants are the practical stand-in.
+- **"Under 100 applicants" is approximate.** LinkedIn has no such filter (only a
+  boolean ~under-10 "early applicant" toggle), and JobSpy returns no count. So
+  the scraper reads the count off each job page itself and the dashboard filters
+  `≤ N` (default 100). LinkedIn often hides or rounds the number ("Over 200"),
+  and those jobs are kept as `applicants: ?` rather than dropped.
+- **LinkedIn's AI/semantic search isn't reachable.** JobSpy uses the guest API
+  (literal keywords + structured filters), so natural-language semantic queries
+  can't be reproduced — the "entry level" keyword variants are the stand-in.
 
 ## Hourly scrape (cron)
 

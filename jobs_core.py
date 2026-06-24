@@ -43,6 +43,9 @@ RESULTS_PER_SEARCH = 40
 SLEEP_BETWEEN = 5
 MY_YEARS = 2
 MAX_YEARS_OK = 4
+# fetch each kept job's LinkedIn applicant count (one extra request per job).
+# turn off if it slows runs or trips rate limits; counts just become unknown.
+FETCH_APPLICANTS = True
 DB_PATH = "jobs.db"
 
 SCHEMA = """
@@ -58,6 +61,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     search_term TEXT,
     min_years INTEGER,
     sponsorship TEXT,
+    applicants INTEGER,
     status TEXT DEFAULT 'new',
     first_seen TEXT
 )
@@ -76,6 +80,12 @@ def get_db(path=None):
 def init_db(path=None):
     conn = get_db(path)
     conn.execute(SCHEMA)
+    # migrate older databases that predate the applicants column
+    cols = []
+    for row in conn.execute("PRAGMA table_info(jobs)"):
+        cols.append(row["name"])
+    if "applicants" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN applicants INTEGER")
     conn.commit()
     conn.close()
 
@@ -159,6 +169,21 @@ def sponsorship_signal(text):
     return "unknown"
 
 
+# the LinkedIn job page shows e.g. "47 applicants", "Over 200 applicants", or
+# "Be among the first 25 applicants" — grab the number in front of "applicant"
+APPLICANTS_RE = re.compile(r"(\d+)\s+applicants?", re.IGNORECASE)
+
+
+def extract_applicants(text):
+    """Return the applicant count mentioned on a job page, or None."""
+    if not text:
+        return None
+    m = APPLICANTS_RE.search(text)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 # ---- scraping ----
 
 def _val(row, key):
@@ -173,7 +198,24 @@ def _val(row, key):
     return v
 
 
-def insert_job(conn, row, term):
+def fetch_applicants(job_id, session):
+    """Best-effort: read a LinkedIn job's applicant count off its page.
+
+    Reuses jobspy's block-evading session. Any failure (blocked, hidden count,
+    non-LinkedIn id) returns None, so the job is simply kept as 'unknown'.
+    """
+    if not session or not job_id or not str(job_id).isdigit():
+        return None
+    try:
+        resp = session.get(f"https://www.linkedin.com/jobs/view/{job_id}", timeout=8)
+        if resp.status_code != 200:
+            return None
+        return extract_applicants(resp.text)
+    except Exception:
+        return None
+
+
+def insert_job(conn, row, term, session=None):
     """Insert one unseen, in-range job. Return True if a row was added."""
     # job_id from JobSpy's id, fall back to the job url
     job_id = _val(row, "id")
@@ -195,10 +237,14 @@ def insert_job(conn, row, term):
     date_posted = _val(row, "date_posted")
     if date_posted is not None:
         date_posted = str(date_posted)
+    # only look up applicants for jobs we're actually keeping
+    applicants = None
+    if FETCH_APPLICANTS:
+        applicants = fetch_applicants(job_id, session)
     conn.execute(
         "INSERT INTO jobs (job_id, title, company, location, url, description, "
-        "date_posted, job_level, search_term, min_years, sponsorship, status, "
-        "first_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "date_posted, job_level, search_term, min_years, sponsorship, applicants, "
+        "status, first_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             job_id,
             _val(row, "title"),
@@ -211,6 +257,7 @@ def insert_job(conn, row, term):
             term,
             min_years,
             sponsorship,
+            applicants,
             "new",
             datetime.now(timezone.utc).isoformat(),
         ),
@@ -225,6 +272,11 @@ def scrape_all(path=None):
 
     init_db(path)
     conn = get_db(path)
+    # one shared session for applicant lookups, matching jobspy's evasion
+    session = None
+    if FETCH_APPLICANTS:
+        from jobspy.util import create_session
+        session = create_session(is_tls=True)
     added = 0
     for i, term in enumerate(SEARCHES):
         # sleep between searches, not before the first or after the last
@@ -246,7 +298,7 @@ def scrape_all(path=None):
         if df is None or len(df) == 0:
             continue
         for _, row in df.iterrows():
-            if insert_job(conn, row, term):
+            if insert_job(conn, row, term, session):
                 added += 1
         conn.commit()
     conn.close()
